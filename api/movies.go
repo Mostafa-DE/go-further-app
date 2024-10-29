@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -10,16 +9,28 @@ import (
 )
 
 func (app *App) createNewMovie(res http.ResponseWriter, req *http.Request) {
-	fmt.Println("Create new movie")
+	var Body struct {
+		Title   string   `json:"title"`
+		Year    int32    `json:"year"`
+		Runtime int32    `json:"runtime"`
+		Genres  []string `json:"genres"`
+	}
+
+	err := app.readJSON(res, req, &Body)
+
+	if err != nil {
+		app.badRequest(res, req, err)
+		return
+	}
+
+	fmt.Fprintf(res, "%+v\n", Body)
 }
 
 func (app *App) getMovie(res http.ResponseWriter, req *http.Request) {
 	id := app.strToInt(app.parseParam(req, "id"))
 
 	if id <= 0 {
-		app.logger.Printf("Invalid movie id: %d", id)
-		http.Error(res, "Invalid movie id", http.StatusBadRequest)
-
+		app.notFound(res, req)
 		return
 	}
 
@@ -34,24 +45,20 @@ func (app *App) getMovie(res http.ResponseWriter, req *http.Request) {
 	}
 
 	err := app.writeJSON(res, http.StatusOK, data.Envelope{"movie": movie}, nil)
+
 	if err != nil {
-		app.logger.Println(err)
-		http.Error(res, "Internal server error", http.StatusInternalServerError)
+		app.internalServerError(res, req, err)
 	}
 }
 
 func (app *App) getAllMovies(res http.ResponseWriter, req *http.Request) {
-	fmt.Println("Get all movies")
-
-	res.Header().Set("Content-Type", "application/json")
-
-	data := map[string]string{
+	_res := map[string]string{
 		"message": "All movies",
 	}
 
-	err := json.NewEncoder(res).Encode(data)
+	err := app.writeJSON(res, http.StatusOK, data.Envelope{"movies": _res}, nil)
 
 	if err != nil {
-		app.logger.Println(err)
+		app.internalServerError(res, req, err)
 	}
 }
