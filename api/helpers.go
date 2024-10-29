@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -40,6 +43,42 @@ func (app *App) writeJSON(res http.ResponseWriter, status int, data interface{},
 	res.Header().Set("Content-Type", "application/json")
 	res.WriteHeader(status)
 	res.Write(_res)
+
+	return nil
+}
+
+func (app *App) readJSON(res http.ResponseWriter, req *http.Request, dist interface{}) error {
+	err := json.NewDecoder(req.Body).Decode(dist)
+
+	var syntaxError *json.SyntaxError
+	var unmarshalTypeError *json.UnmarshalTypeError
+	var invalidUnmarshalError *json.InvalidUnmarshalError
+
+	if err != nil {
+		switch {
+		case errors.As(err, &syntaxError):
+			return fmt.Errorf("Request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
+
+		case errors.As(err, &unmarshalTypeError):
+			if unmarshalTypeError.Field != "" {
+				return fmt.Errorf("body contains incorrect JSON type for field %q", unmarshalTypeError.Field)
+			}
+
+			return fmt.Errorf("body contains incorrect JSON type (at character %d)", unmarshalTypeError.Offset)
+
+		case errors.Is(err, io.EOF):
+			return fmt.Errorf("Request body must not be empty")
+
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return errors.New("body contains badly-formed JSON")
+
+		case errors.As(err, &invalidUnmarshalError):
+			panic(err)
+
+		default:
+			return err
+		}
+	}
 
 	return nil
 }
