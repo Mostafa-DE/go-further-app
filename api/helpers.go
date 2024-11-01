@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/julienschmidt/httprouter"
 )
@@ -47,8 +48,14 @@ func (app *App) writeJSON(res http.ResponseWriter, status int, data interface{},
 	return nil
 }
 
-func (app *App) readJSON(res http.ResponseWriter, req *http.Request, dist interface{}) error {
-	err := json.NewDecoder(req.Body).Decode(dist)
+func (app *App) readJSON(res http.ResponseWriter, req *http.Request, dest interface{}) error {
+	max_bytes := 1_048_576 // 1MB
+	req.Body = http.MaxBytesReader(res, req.Body, int64(max_bytes))
+
+	dec := json.NewDecoder(req.Body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(dest)
 
 	var syntaxError *json.SyntaxError
 	var unmarshalTypeError *json.UnmarshalTypeError
@@ -57,7 +64,7 @@ func (app *App) readJSON(res http.ResponseWriter, req *http.Request, dist interf
 	if err != nil {
 		switch {
 		case errors.As(err, &syntaxError):
-			return fmt.Errorf("Request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
+			return fmt.Errorf("request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
 
 		case errors.As(err, &unmarshalTypeError):
 			if unmarshalTypeError.Field != "" {
@@ -67,10 +74,17 @@ func (app *App) readJSON(res http.ResponseWriter, req *http.Request, dist interf
 			return fmt.Errorf("body contains incorrect JSON type (at character %d)", unmarshalTypeError.Offset)
 
 		case errors.Is(err, io.EOF):
-			return fmt.Errorf("Request body must not be empty")
+			return fmt.Errorf("request body must not be empty")
 
 		case errors.Is(err, io.ErrUnexpectedEOF):
 			return errors.New("body contains badly-formed JSON")
+
+		case strings.HasPrefix(err.Error(), "json: unknown field "):
+			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
+			return fmt.Errorf("body contains unknown field %s", fieldName)
+
+		case err.Error() == "http: request body too large":
+			return fmt.Errorf("body must not be larger than %d bytes", max_bytes)
 
 		case errors.As(err, &invalidUnmarshalError):
 			panic(err)
@@ -78,6 +92,13 @@ func (app *App) readJSON(res http.ResponseWriter, req *http.Request, dist interf
 		default:
 			return err
 		}
+	}
+
+	// Check if there are any more bytes in the request body
+	// If so, return an error
+	err = dec.Decode(&struct{}{})
+	if err != io.EOF {
+		return errors.New("request body must only contain a single JSON value")
 	}
 
 	return nil
